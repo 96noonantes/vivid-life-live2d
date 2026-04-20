@@ -119,43 +119,8 @@ export class Live2DEngine {
   }
 
   async loadBaseModel(modelUrl: string): Promise<any> {
-    if (!this.app || !this.container) throw new Error('Engine not initialized');
-
-    // Remove any sprite character first
-    this.removeSpriteCharacter();
-
-    // Remove existing base model
-    if (this.baseModel) {
-      this.container.removeChild(this.baseModel);
-      this.baseModel.destroy();
-      this.baseModel = null;
-    }
-
-    // Remove all outfit models when switching base
-    this.outfitModels.forEach((model) => {
-      this.container.removeChild(model);
-      model.destroy();
-    });
-    this.outfitModels.clear();
-
-    const model = await Live2DModel.from(modelUrl, { autoInteract: false });
-
-    // Scale and position model at center
-    const scale = Math.min(
-      (this.app.screen.width * 0.8) / model.width,
-      (this.app.screen.height * 0.9) / model.height
-    );
-    model.scale.set(scale);
-    model.x = (this.app.screen.width - model.width) / 2;
-    model.y = (this.app.screen.height - model.height) / 2;
-
-    this.container.addChildAt(model, 0);
-    this.baseModel = model;
-    this._currentModelUrl = modelUrl;
-    this._characterMode = 'live2d';
-    this.onModelLoaded?.(model, 'base');
-
-    return model;
+    // [修正 #10] switchCharacterに委譲（DRY原則）
+    return this.switchCharacter(modelUrl);
   }
 
   /**
@@ -168,19 +133,8 @@ export class Live2DEngine {
     // Remove sprite character if present
     this.removeSpriteCharacter();
 
-    // Clear all outfits first
-    this.outfitModels.forEach((model) => {
-      this.container.removeChild(model);
-      model.destroy();
-    });
-    this.outfitModels.clear();
-
-    // Remove existing base model
-    if (this.baseModel) {
-      this.container.removeChild(this.baseModel);
-      this.baseModel.destroy();
-      this.baseModel = null;
-    }
+    // [修正 #6] 安全なモデル削除（parentチェック付き）
+    this.clearAllModels();
 
     // Load new model
     const model = await Live2DModel.from(modelUrl, { autoInteract: false });
@@ -234,6 +188,29 @@ export class Live2DEngine {
   }
 
   /**
+   * [修正 #6] 安全に全モデルを削除（parentチェック付きorphan防止）
+   */
+  private clearAllModels(): void {
+    // 基本モデルを削除
+    if (this.baseModel) {
+      if (this.baseModel.parent) {
+        this.container.removeChild(this.baseModel);
+      }
+      this.baseModel.destroy();
+      this.baseModel = null;
+    }
+
+    // 衣装モデルを削除
+    this.outfitModels.forEach((model) => {
+      if (model.parent) {
+        this.container.removeChild(model);
+      }
+      model.destroy();
+    });
+    this.outfitModels.clear();
+  }
+
+  /**
    * スプライトキャラクターを削除
    */
   removeSpriteCharacter(): void {
@@ -276,7 +253,10 @@ export class Live2DEngine {
     const model = this.outfitModels.get(outfitId);
     if (!model) return false;
 
-    this.container?.removeChild(model);
+    // [修正 #6] parentチェック付きで安全に削除
+    if (model.parent) {
+      this.container?.removeChild(model);
+    }
     model.destroy();
     this.outfitModels.delete(outfitId);
     return true;
@@ -287,7 +267,9 @@ export class Live2DEngine {
    */
   removeAllOutfits(): void {
     this.outfitModels.forEach((model) => {
-      this.container?.removeChild(model);
+      if (model.parent) {
+        this.container?.removeChild(model);
+      }
       model.destroy();
     });
     this.outfitModels.clear();
@@ -317,12 +299,7 @@ export class Live2DEngine {
 
   destroy(): void {
     this.removeSpriteCharacter();
-    this.outfitModels.forEach(model => model.destroy());
-    this.outfitModels.clear();
-    if (this.baseModel) {
-      this.baseModel.destroy();
-      this.baseModel = null;
-    }
+    this.clearAllModels();
     this.app?.destroy(true);
     this.app = null;
     this._isInitialized = false;

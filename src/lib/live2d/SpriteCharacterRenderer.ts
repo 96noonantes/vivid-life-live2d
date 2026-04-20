@@ -4,14 +4,12 @@
  * SpriteCharacterRenderer - AI生成画像からLive2D風アニメーションキャラクターを構築
  *
  * PixiJSスプライトレイヤーで以下のアニメーションを実現:
- * - 呼吸 (Breathing): Y軸スケールの微妙な振動
+ * - 呼吸 (Breathing): スケールの微小振動（X/Y連動で歪み防止）
  * - 瞬き (Blinking): 開眼/閉眼スプライトのクロスフェード
  * - LookAt: マウス/ジャイロに追従する位置オフセット
- * - 感情 (Emotion): 表情スプライトの切り替え
+ * - 感情 (Emotion): 表情スプライトの切り替え（rAF管理付きフェード）
  * - 体の揺れ (Body Sway): 微小回転振動
  * - 髪の揺れ (Hair Sway): 遅延追従の回転
- *
- * これはpixi-live2d-displayのモデルと同じコンテナに追加可能
  */
 
 import type { CharacterPartImages } from './CharacterGenerator';
@@ -36,7 +34,7 @@ export interface SpriteAnimationState {
   lookAtY: number;
   isBlinking: boolean;
   currentEmotion: SpriteEmotion;
-  emotionTransition: number; // 0-1 for fade
+  emotionTransition: number;
 }
 
 export class SpriteCharacterRenderer {
@@ -45,6 +43,11 @@ export class SpriteCharacterRenderer {
   private currentEmotionSprite: string = 'base';
   private eyesClosedSprite: any = null;
   private currentEmotion: SpriteEmotion = 'neutral';
+
+  // [修正 #1] 基準位置を保存（毎フレーム設定し直すことでドリフト防止）
+  private baseX = 0;
+  private baseY = 0;
+  private baseScale = 1;
 
   // アニメーション状態
   private breathAngle = 0;
@@ -59,11 +62,10 @@ export class SpriteCharacterRenderer {
   private isBlinking = false;
   private blinkTimer = 0;
   private nextBlinkTime = 3000;
-  private blinkPhase = 0; // 0: open, 1: closing, 2: closed, 3: opening
+  private blinkPhase = 0;
 
-  // 感情切り替えフェード
-  private emotionFadeAlpha = 1;
-  private previousEmotionSprite: any = null;
+  // [修正 #3] フェードrAF ID管理（クリーンアップ可能）
+  private fadeAnimIds: Map<string, number> = new Map();
 
   // 定数
   private readonly BREATH_SPEED = 0.0015;
@@ -117,7 +119,7 @@ export class SpriteCharacterRenderer {
         const texture = await PIXI.Texture.fromURL(dataUrl);
         const sprite = new PIXI.Sprite(texture);
         sprite.anchor.set(0.5, 0.5);
-        sprite.alpha = 0; // 初期は非表示
+        sprite.alpha = 0;
         sprite.zIndex = key === 'base' ? 0 : 1;
         renderer.container.addChild(sprite);
         renderer.sprites.set(key, sprite);
@@ -150,8 +152,10 @@ export class SpriteCharacterRenderer {
 
     // コンテナをステージに追加してスケール調整
     const screen = pixiApp.screen;
-    renderer.container.x = screen.width / 2;
-    renderer.container.y = screen.height / 2;
+    renderer.baseX = screen.width / 2;
+    renderer.baseY = screen.height / 2;
+    renderer.container.x = renderer.baseX;
+    renderer.container.y = renderer.baseY;
 
     // ベーススプライトのサイズに基づいてスケール調整
     if (baseSprite) {
@@ -159,6 +163,7 @@ export class SpriteCharacterRenderer {
       const scaleY = (screen.height * 0.85) / baseSprite.texture.height;
       const scale = Math.min(scaleX, scaleY, 1.0);
       renderer.container.scale.set(scale);
+      renderer.baseScale = scale;
     }
 
     pixiApp.stage.addChild(renderer.container);
@@ -168,7 +173,7 @@ export class SpriteCharacterRenderer {
   }
 
   /**
-   * 毎フレーム更新 - VividnessSyncManagerから呼び出し
+   * 毎フレーム更新
    */
   update(deltaTime: number): void {
     if (!this._isReady || !this.container) return;
@@ -177,7 +182,12 @@ export class SpriteCharacterRenderer {
 
     // ===== 呼吸アニメーション =====
     this.breathAngle += this.BREATH_SPEED * dt;
-    const breathScale = 1 + Math.sin(this.breathAngle) * this.BREATH_AMOUNT;
+    const breathOffset = Math.sin(this.breathAngle) * this.BREATH_AMOUNT;
+
+    // [修正 #2] scale.xとscale.yを連動（歪み防止）
+    // 呼吸はY方向にやや大きく、X方向は半分の振幅
+    this.container.scale.x = this.baseScale * (1 + breathOffset * 0.3);
+    this.container.scale.y = this.baseScale * (1 + breathOffset);
 
     // ===== 体の揺れ =====
     this.swayAngle += this.SWAY_SPEED * dt;
@@ -197,16 +207,14 @@ export class SpriteCharacterRenderer {
     // ===== 瞬き =====
     this.updateBlink(dt);
 
-    // ===== コンテナにアニメーションを適用 =====
-    this.container.scale.y = breathScale;
+    // [修正 #1] 位置を毎フレーム基準位置+オフセットで設定（ドリフト防止）
+    this.container.x = this.baseX + offsetX * 0.3;
+    this.container.y = this.baseY + offsetY * 0.3;
     this.container.rotation = swayRotation;
-    this.container.x += offsetX * 0.3;
-    this.container.y += offsetY * 0.3;
 
     // LookAtによる個別パーツオフセット
     for (const [key, sprite] of this.sprites) {
       if (!sprite) continue;
-      // 頭部パーツはLookAtでわずかに追従
       sprite.x = offsetX * 0.5;
       sprite.y = offsetY * 0.3;
     }
@@ -235,7 +243,6 @@ export class SpriteCharacterRenderer {
         this.isBlinking = false;
         this.blinkPhase = 0;
         this.blinkTimer = 0;
-        // 次の瞬きまでのランダム間隔 (2.5s - 5.5s)
         this.nextBlinkTime = 2500 + Math.random() * 3000;
       }
     }
@@ -270,13 +277,13 @@ export class SpriteCharacterRenderer {
     // 現在の表情をフェードアウト
     const prevSprite = this.sprites.get(this.currentEmotionSprite);
     if (prevSprite && this.currentEmotionSprite !== 'base') {
-      this.fadeSprite(prevSprite, 0, 200);
+      this.fadeSprite(this.currentEmotionSprite, prevSprite, 0, 200);
     }
 
     // 新しい表情をフェードイン
     const nextSprite = this.sprites.get(targetKey);
     if (nextSprite) {
-      this.fadeSprite(nextSprite, 1, 200);
+      this.fadeSprite(targetKey, nextSprite, 1, 200);
     }
 
     this.currentEmotion = emotion;
@@ -284,23 +291,50 @@ export class SpriteCharacterRenderer {
   }
 
   /**
-   * スプライトのアルファフェード
+   * [修正 #3] スプライトのアルファフェード（rAF ID管理・キャンセル可能）
    */
-  private fadeSprite(sprite: any, targetAlpha: number, duration: number): void {
+  private fadeSprite(spriteKey: string, sprite: any, targetAlpha: number, duration: number): void {
+    // 既存のフェードをキャンセル
+    const existingId = this.fadeAnimIds.get(spriteKey);
+    if (existingId !== undefined) {
+      cancelAnimationFrame(existingId);
+      this.fadeAnimIds.delete(spriteKey);
+    }
+
     const startAlpha = sprite.alpha;
     const startTime = performance.now();
 
     const animate = () => {
+      // destroy済みの場合は停止
+      if (!this._isReady || !sprite) {
+        this.fadeAnimIds.delete(spriteKey);
+        return;
+      }
+
       const elapsed = performance.now() - startTime;
       const progress = Math.min(elapsed / duration, 1);
       sprite.alpha = startAlpha + (targetAlpha - startAlpha) * progress;
 
       if (progress < 1) {
-        requestAnimationFrame(animate);
+        const id = requestAnimationFrame(animate);
+        this.fadeAnimIds.set(spriteKey, id);
+      } else {
+        this.fadeAnimIds.delete(spriteKey);
       }
     };
 
-    requestAnimationFrame(animate);
+    const id = requestAnimationFrame(animate);
+    this.fadeAnimIds.set(spriteKey, id);
+  }
+
+  /**
+   * 全フェードアニメーションをキャンセル
+   */
+  private cancelAllFades(): void {
+    for (const id of this.fadeAnimIds.values()) {
+      cancelAnimationFrame(id);
+    }
+    this.fadeAnimIds.clear();
   }
 
   /**
@@ -309,14 +343,18 @@ export class SpriteCharacterRenderer {
   resize(screenWidth: number, screenHeight: number): void {
     if (!this.container) return;
 
-    this.container.x = screenWidth / 2;
-    this.container.y = screenHeight / 2;
+    // [修正 #1] 基準位置も更新
+    this.baseX = screenWidth / 2;
+    this.baseY = screenHeight / 2;
+    this.container.x = this.baseX;
+    this.container.y = this.baseY;
 
     const baseSprite = this.sprites.get('base');
     if (baseSprite) {
       const scaleX = (screenWidth * 0.6) / baseSprite.texture.width;
       const scaleY = (screenHeight * 0.85) / baseSprite.texture.height;
       const scale = Math.min(scaleX, scaleY, 1.0);
+      this.baseScale = scale;
       this.container.scale.set(scale);
     }
   }
@@ -334,7 +372,7 @@ export class SpriteCharacterRenderer {
       lookAtY: this.lookAtY,
       isBlinking: this.isBlinking,
       currentEmotion: this.currentEmotion,
-      emotionTransition: this.emotionFadeAlpha,
+      emotionTransition: 1,
     };
   }
 
@@ -342,6 +380,9 @@ export class SpriteCharacterRenderer {
    * リソースを破棄
    */
   destroy(): void {
+    // [修正 #3] フェードアニメーションを全てキャンセル
+    this.cancelAllFades();
+
     if (this.container) {
       this.container.destroy({ children: true });
       this.container = null;

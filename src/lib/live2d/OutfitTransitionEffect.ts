@@ -114,11 +114,9 @@ export class OutfitTransitionEffect {
     }, 2500);
   }
 
-  private styleInjected = false;
-
+  // [修正 #12] インスタンス変数ではなくdocument内の存在チェックで二重注入を防止
   private injectAnimationStyles(): void {
-    if (this.styleInjected) return;
-    this.styleInjected = true;
+    if (document.getElementById('outfit-transition-styles')) return;
 
     const style = document.createElement('style');
     style.id = 'outfit-transition-styles';

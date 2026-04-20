@@ -56,6 +56,10 @@ export function useLive2D() {
     emotion: string;
   } | null>(null);
 
+  // [修正 #4] throttle: setStateを100ms間隔に制限（毎フレーム更新による再レンダリング防止）
+  const lastSpriteStateUpdateRef = useRef<number>(0);
+  const SPRITE_STATE_UPDATE_INTERVAL = 100; // ms
+
   const initialize = useCallback(async (canvas: HTMLCanvasElement, container: HTMLDivElement) => {
     if (engineRef.current?.isInitialized) return;
 
@@ -364,6 +368,7 @@ export function useLive2D() {
 
   /**
    * スプライトアニメーションループを開始
+   * [修正 #4] setStateを100ms間隔にthrottle
    */
   const startSpriteAnimation = useCallback(() => {
     if (spriteAnimFrameRef.current) return;
@@ -378,15 +383,18 @@ export function useLive2D() {
       if (renderer && renderer.isReady) {
         renderer.update(dt);
 
-        // 状態をUIに通知（VividnessState代替）
-        const state = renderer.getState();
-        setSpriteState({
-          breathValue: Math.sin(state.breathAngle) * 0.5 + 0.5,
-          isBlinking: state.isBlinking,
-          lookAtX: state.lookAtX,
-          lookAtY: state.lookAtY,
-          emotion: state.currentEmotion,
-        });
+        // throttle: 100ms間隔でのみsetState
+        if (time - lastSpriteStateUpdateRef.current >= SPRITE_STATE_UPDATE_INTERVAL) {
+          lastSpriteStateUpdateRef.current = time;
+          const state = renderer.getState();
+          setSpriteState({
+            breathValue: Math.sin(state.breathAngle) * 0.5 + 0.5,
+            isBlinking: state.isBlinking,
+            lookAtX: state.lookAtX,
+            lookAtY: state.lookAtY,
+            emotion: state.currentEmotion,
+          });
+        }
       }
 
       spriteAnimFrameRef.current = requestAnimationFrame(animate);

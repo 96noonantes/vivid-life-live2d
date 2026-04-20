@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
+import { generateImage } from '@/lib/ai/imageGen';
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,26 +25,9 @@ export async function POST(request: NextRequest) {
     const stylePrefix = styleMap[style || 'anime'] || styleMap.anime;
     const fullPrompt = `${stylePrefix}, ${prompt.trim()}, high quality, character reference sheet`;
 
-    const zai = await ZAI.create();
+    const result = await generateImage(fullPrompt);
 
-    const response = await zai.images.generations.create({
-      prompt: fullPrompt,
-      size: '864x1152',
-    });
-
-    const imageBase64 = response.data[0]?.base64;
-
-    if (!imageBase64) {
-      return NextResponse.json(
-        { error: 'Failed to generate image' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      image: `data:image/png;base64,${imageBase64}`,
-      prompt: fullPrompt,
-    });
+    return NextResponse.json(result);
   } catch (error: any) {
     console.error('Portrait generation error:', error);
     return NextResponse.json(

@@ -35,6 +35,8 @@ export interface GeneratedCharacterData {
   createdAt: number;
   /** 生成に使用した各パーツのプロンプト */
   partPrompts: Record<keyof CharacterPartImages, string>;
+  /** [修正 #5] フォールバックしたパーツのリスト（ユーザー通知用） */
+  fallbackParts: string[];
 }
 
 export type GenerationProgress = {
@@ -195,9 +197,11 @@ export class CharacterGenerator {
     if (!parts.base) {
       throw new Error('ベース画像の生成に失敗しました');
     }
+    const fallbackParts: string[] = [];
     for (const key of partKeys) {
       if (!parts[key]) {
         parts[key] = parts.base;
+        fallbackParts.push(key);
       }
     }
 
@@ -209,6 +213,7 @@ export class CharacterGenerator {
       parts: parts as CharacterPartImages,
       createdAt: Date.now(),
       partPrompts: partPrompts as Record<keyof CharacterPartImages, string>,
+      fallbackParts,
     };
   }
 }

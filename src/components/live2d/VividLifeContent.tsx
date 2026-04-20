@@ -174,6 +174,18 @@ export default function VividLifeContent() {
     const result = await generateLive2DCharacter(charPrompt, charStyle);
     if (result) {
       setCharPreview(result.parts.base);
+      // [修正 #5] フォールバック通知
+      if (result.fallbackParts.length > 0) {
+        const partLabels: Record<string, string> = {
+          eyesClosed: '閉眼', joy: '喜び', sorrow: '悲しみ',
+          anger: '怒り', surprise: '驚き', relax: 'リラックス',
+        };
+        const labels = result.fallbackParts.map(k => partLabels[k] || k).join('、');
+        // 少し遅延させてトースト表示（生成完了オーバーレイが消えた後）
+        setTimeout(() => {
+          alert(`一部の表情パーツ（${labels}）の生成に失敗しました。ニュートラル表情で代用しています。`);
+        }, 1500);
+      }
     }
   };
 

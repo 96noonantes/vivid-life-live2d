@@ -1,4 +1,6 @@
-'use client';
+/**
+ * [修正 #9] 'use client' 削除 - ブラウザAPIに依存しない純粋なTypeScript定数
+ */
 
 /**
  * Live2D Model Preset Library

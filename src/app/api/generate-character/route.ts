@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
+import { generateImage } from '@/lib/ai/imageGen';
 
 /**
  * POST /api/generate-character
@@ -22,25 +22,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const zai = await ZAI.create();
-
-    const response = await zai.images.generations.create({
-      prompt: prompt.trim(),
-      size: '864x1152',
-    });
-
-    const imageBase64 = response.data[0]?.base64;
-
-    if (!imageBase64) {
-      return NextResponse.json(
-        { error: 'Failed to generate image' },
-        { status: 500 }
-      );
-    }
+    const result = await generateImage(prompt);
 
     return NextResponse.json({
-      image: `data:image/png;base64,${imageBase64}`,
-      prompt: prompt.trim(),
+      ...result,
       partType: partType || 'unknown',
     });
   } catch (error: any) {
