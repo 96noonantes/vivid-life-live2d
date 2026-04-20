@@ -1,6 +1,5 @@
 'use client';
 
-import { Live2DModel } from 'pixi-live2d-display';
 import type { Live2DEngine } from './Live2DEngine';
 
 export interface VividnessState {
@@ -24,12 +23,64 @@ export interface VividnessState {
   microMovementTime: number;
 }
 
+/**
+ * Emotion parameter mapping for Live2D Cubism models.
+ * Each emotion maps to a set of parameter IDs and target values.
+ * Values are multiplied by the emotion intensity before being applied.
+ */
+const EMOTION_PARAMETER_MAP: Record<string, Record<string, number>> = {
+  joy: {
+    ParamMouthOpenY: 0.4,
+    ParamEyeLOpen: 1.2,
+    ParamEyeROpen: 1.2,
+    ParamBrowLY: 0.5,
+    ParamBrowRY: 0.5,
+    ParamMouthForm: 0.5,
+  },
+  sorrow: {
+    ParamMouthOpenY: 0.1,
+    ParamEyeLOpen: 0.4,
+    ParamEyeROpen: 0.4,
+    ParamBrowLY: -0.5,
+    ParamBrowRY: -0.5,
+    ParamMouthForm: -0.5,
+  },
+  anger: {
+    ParamMouthOpenY: 0.3,
+    ParamEyeLOpen: 0.8,
+    ParamEyeROpen: 0.8,
+    ParamBrowLY: -0.7,
+    ParamBrowRY: -0.7,
+    ParamMouthForm: -0.3,
+  },
+  relax: {
+    ParamMouthOpenY: 0.1,
+    ParamEyeLOpen: 0.6,
+    ParamEyeROpen: 0.6,
+    ParamBrowLY: 0.2,
+    ParamBrowRY: 0.2,
+    ParamMouthForm: 0.3,
+  },
+  surprise: {
+    ParamMouthOpenY: 0.8,
+    ParamEyeLOpen: 1.5,
+    ParamEyeROpen: 1.5,
+    ParamBrowLY: 0.8,
+    ParamBrowRY: 0.8,
+    ParamMouthForm: 0.0,
+  },
+  neutral: {},
+};
+
 export class VividnessSyncManager {
   private engine: Live2DEngine;
   private state: VividnessState;
   private lastTime: number = 0;
   private animationFrameId: number | null = null;
   private _isActive = false;
+
+  // Callback for external state monitoring
+  public onStateUpdate?: (state: VividnessState) => void;
 
   constructor(engine: Live2DEngine) {
     this.engine = engine;
@@ -83,7 +134,7 @@ export class VividnessSyncManager {
     if (!this._isActive) return;
 
     const now = performance.now();
-    const deltaTime = (now - this.lastTime) / 1000;
+    const deltaTime = Math.min((now - this.lastTime) / 1000, 0.1); // Cap delta to avoid large jumps
     this.lastTime = now;
 
     this.updateInvoluntaryMovement(deltaTime);
@@ -91,25 +142,37 @@ export class VividnessSyncManager {
     this.updateBlinking(deltaTime);
     this.applyToModels();
 
+    // Notify external listeners
+    this.onStateUpdate?.(this.vividnessState);
+
     this.animationFrameId = requestAnimationFrame(this.update);
   };
 
+  /**
+   * 不随意運動: Breathing and micro body sway
+   */
   private updateInvoluntaryMovement(dt: number): void {
-    // Breathing
+    // Breathing cycle
     this.state.breathAngle += (2 * Math.PI / this.state.breathCycle) * dt;
 
-    // Micro body sway
+    // Micro body sway - sinusoidal with slight randomization
     this.state.microMovementTime += dt;
     this.state.bodyAngleZ = Math.sin(this.state.microMovementTime * 0.5) * 1.5; // ±1.5 degrees
   }
 
+  /**
+   * 視線追従: Smooth interpolation for look-at
+   */
   private updateLookAt(dt: number): void {
-    // Smooth interpolation for look-at
+    // Exponential smoothing for natural feel
     const lerpFactor = 1 - Math.pow(0.001, dt);
     this.state.lookAtX += (this.state.targetLookAtX - this.state.lookAtX) * lerpFactor;
     this.state.lookAtY += (this.state.targetLookAtY - this.state.lookAtY) * lerpFactor;
   }
 
+  /**
+   * 瞬き: Random blinking with natural timing
+   */
   private updateBlinking(dt: number): void {
     this.state.blinkTimer += dt;
 
@@ -125,23 +188,29 @@ export class VividnessSyncManager {
     }
   }
 
+  /**
+   * Apply all vividness parameters to base model and broadcast to outfits
+   */
   private applyToModels(): void {
     const baseModel = this.engine.currentBaseModel;
     if (!baseModel) return;
 
-    // Apply to base model
+    // Apply to base model first
     this.applyVividnessToModel(baseModel);
 
-    // Broadcast to all outfit models (SYNC)
-    this.engine.currentOutfits.forEach((outfitModel) => {
+    // BROADCAST: Sync all parameters to outfit models
+    this.engine.currentOutfits.forEach((outfitModel: any) => {
       this.syncParametersToOutfit(baseModel, outfitModel);
       this.applyVividnessToModel(outfitModel);
     });
   }
 
-  private applyVividnessToModel(model: Live2DModel): void {
+  /**
+   * Apply vividness (breathing, look-at, blinking, emotion) to a model
+   */
+  private applyVividnessToModel(model: any): void {
     try {
-      const internalModel = (model as any).internalModel;
+      const internalModel = model.internalModel;
       if (!internalModel) return;
 
       // Breathing
@@ -171,11 +240,15 @@ export class VividnessSyncManager {
     }
   }
 
-  private syncParametersToOutfit(source: Live2DModel, target: Live2DModel): void {
-    // BROADCAST: Copy all parameter values from source to target
+  /**
+   * パラメータ・ブロードキャスト: Copy all parameter values from source to target
+   * This is the core of the "Multi-Model Synchronize" architecture.
+   * Outfit models receive identical expression, pose, and look-at data as the base model.
+   */
+  private syncParametersToOutfit(source: any, target: any): void {
     try {
-      const sourceInternal = (source as any).internalModel;
-      const targetInternal = (target as any).internalModel;
+      const sourceInternal = source.internalModel;
+      const targetInternal = target.internalModel;
       if (!sourceInternal || !targetInternal) return;
 
       // For Cubism 4 models
@@ -202,28 +275,25 @@ export class VividnessSyncManager {
     }
   }
 
-  private applyEmotion(model: Live2DModel): void {
+  /**
+   * 感情同期: Apply emotion-specific parameter overrides
+   */
+  private applyEmotion(model: any): void {
     const emotion = this.state.currentEmotion;
     const intensity = this.state.emotionIntensity;
 
-    const emotionMap: Record<string, Record<string, number>> = {
-      joy: { 'ParamMouthOpenY': 0.4, 'ParamEyeLOpen': 1.2, 'ParamEyeROpen': 1.2, 'ParamBrowLY': 0.5, 'ParamBrowRY': 0.5 },
-      sorrow: { 'ParamMouthOpenY': 0.1, 'ParamEyeLOpen': 0.4, 'ParamEyeROpen': 0.4, 'ParamBrowLY': -0.5, 'ParamBrowRY': -0.5 },
-      anger: { 'ParamMouthOpenY': 0.3, 'ParamEyeLOpen': 0.8, 'ParamEyeROpen': 0.8, 'ParamBrowLY': -0.7, 'ParamBrowRY': -0.7 },
-      relax: { 'ParamMouthOpenY': 0.1, 'ParamEyeLOpen': 0.6, 'ParamEyeROpen': 0.6, 'ParamBrowLY': 0.2, 'ParamBrowRY': 0.2 },
-      surprise: { 'ParamMouthOpenY': 0.8, 'ParamEyeLOpen': 1.5, 'ParamEyeROpen': 1.5, 'ParamBrowLY': 0.8, 'ParamBrowRY': 0.8 },
-      neutral: {},
-    };
-
-    const params = emotionMap[emotion] || emotionMap.neutral;
+    const params = EMOTION_PARAMETER_MAP[emotion] || EMOTION_PARAMETER_MAP.neutral;
     for (const [paramId, value] of Object.entries(params)) {
       this.setParameterValue(model, paramId, value * intensity);
     }
   }
 
-  private setParameterValue(model: Live2DModel, paramId: string, value: number): void {
+  /**
+   * Set a parameter value by ID on a Live2D model
+   */
+  private setParameterValue(model: any, paramId: string, value: number): void {
     try {
-      const internalModel = (model as any).internalModel;
+      const internalModel = model.internalModel;
       if (!internalModel) return;
 
       // For pixi-live2d-display with Cubism 4

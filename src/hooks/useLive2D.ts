@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { Live2DEngine, VividnessSyncManager, OutfitPluginLoader, OcclusionManager, OutfitTransitionEffect } from '@/lib/live2d';
-import type { OutfitManifest } from '@/lib/live2d';
+import type { OutfitManifest, VividnessState } from '@/lib/live2d';
 
 const BASE_MODEL_URL = 'https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori/hiyori_pro_t10.model3.json';
 
@@ -21,6 +21,7 @@ export function useLive2D() {
   const [availableOutfits, setAvailableOutfits] = useState<OutfitManifest[]>([]);
   const [currentEmotion, setCurrentEmotion] = useState('neutral');
   const [error, setError] = useState<string | null>(null);
+  const [vividnessState, setVividnessState] = useState<VividnessState | null>(null);
 
   const initialize = useCallback(async (canvas: HTMLCanvasElement, container: HTMLDivElement) => {
     if (engineRef.current?.isInitialized) return;
@@ -29,7 +30,7 @@ export function useLive2D() {
       setIsLoading(true);
       setError(null);
 
-      // Initialize engine
+      // Initialize engine (lazy-loads pixi.js internally)
       const engine = new Live2DEngine();
       await engine.initialize({
         canvas,
@@ -38,8 +39,11 @@ export function useLive2D() {
       });
       engineRef.current = engine;
 
-      // Initialize sync manager
+      // Initialize sync manager with state callback
       const syncManager = new VividnessSyncManager(engine);
+      syncManager.onStateUpdate = (state) => {
+        setVividnessState(state);
+      };
       syncManagerRef.current = syncManager;
 
       // Initialize plugin loader
@@ -59,16 +63,17 @@ export function useLive2D() {
       // Load base model
       await engine.loadBaseModel(BASE_MODEL_URL);
 
-      // Start sync
+      // Start vividness sync (breathing, blinking, look-at, emotions)
       syncManager.start();
 
-      // Load available outfits
+      // Load available outfits from manifests
       const outfits = await pluginLoader.getAvailableOutfits();
       setAvailableOutfits(outfits);
 
       setIsInitialized(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to initialize Live2D');
+      const message = e instanceof Error ? e.message : 'Failed to initialize Live2D';
+      setError(message);
       console.error('Live2D initialization error:', e);
     } finally {
       setIsLoading(false);
@@ -76,20 +81,19 @@ export function useLive2D() {
   }, []);
 
   const changeOutfit = useCallback(async (outfitId: string) => {
-    if (!engineRef.current || !pluginLoaderRef.current || !occlusionManagerRef.current) return;
+    if (!engineRef.current || !occlusionManagerRef.current) return;
 
     try {
       setIsLoading(true);
       const outfit = availableOutfits.find(o => o.id === outfitId);
       if (!outfit) throw new Error(`Outfit ${outfitId} not found`);
 
-      // Play transition effect
-      if (transitionRef.current && containerRef.current) {
+      // Play transition effect to maintain vividness during the swap
+      if (transitionRef.current) {
         await transitionRef.current.playTransition(async () => {
           // Remove previous outfit
           if (currentOutfit) {
             engineRef.current!.removeOutfit(currentOutfit);
-            // Restore base model parts
             const baseModel = engineRef.current!.currentBaseModel;
             if (baseModel) {
               occlusionManagerRef.current!.restoreModel(baseModel, 'base');
@@ -99,14 +103,14 @@ export function useLive2D() {
           // Load new outfit
           await engineRef.current!.loadOutfit(outfitId, outfit.modelUrl, outfit.zIndex);
 
-          // Apply occlusion (hide base model parts)
+          // Apply occlusion (hide base body parts that would poke through)
           const baseModel = engineRef.current!.currentBaseModel;
           if (baseModel && outfit.hide_parts.length > 0) {
             occlusionManagerRef.current!.applyOcclusion(baseModel, 'base', outfit.hide_parts);
           }
         });
       } else {
-        // No transition effect, just swap
+        // No transition, just swap directly
         if (currentOutfit) {
           engineRef.current.removeOutfit(currentOutfit);
           const baseModel = engineRef.current.currentBaseModel;
@@ -151,7 +155,7 @@ export function useLive2D() {
 
   const handleMouseMove = useCallback((clientX: number, clientY: number, canvasWidth: number, canvasHeight: number) => {
     if (!syncManagerRef.current) return;
-    // Normalize to -1 to 1
+    // Normalize to -1 to 1 (center = 0)
     const x = (clientX / canvasWidth) * 2 - 1;
     const y = (clientY / canvasHeight) * 2 - 1;
     syncManagerRef.current.setLookAtTarget(x, y);
@@ -164,6 +168,11 @@ export function useLive2D() {
     const x = Math.max(-1, Math.min(1, gamma / 45));
     const y = Math.max(-1, Math.min(1, (beta - 45) / 45));
     syncManagerRef.current.setLookAtTarget(x, y);
+  }, []);
+
+  const handleResize = useCallback((width: number, height: number) => {
+    if (!engineRef.current?.isInitialized) return;
+    engineRef.current.resize(width, height);
   }, []);
 
   // Cleanup on unmount
@@ -183,10 +192,12 @@ export function useLive2D() {
     availableOutfits,
     currentEmotion,
     error,
+    vividnessState,
     changeOutfit,
     removeOutfit,
     setEmotion,
     handleMouseMove,
     handleGyroscope,
+    handleResize,
   };
 }

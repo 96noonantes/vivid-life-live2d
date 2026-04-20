@@ -22,13 +22,15 @@ export interface BaseManifest {
 const DB_NAME = 'Live2DOutfitCache';
 const DB_VERSION = 1;
 const STORE_NAME = 'outfits';
-const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days in ms (PWA rule)
+const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days in ms (PWA 7-day rule countermeasure)
 
 export class OutfitPluginLoader {
   private db: IDBDatabase | null = null;
 
   async initialize(): Promise<void> {
     this.db = await this.openDB();
+    // Clean expired cache on init
+    await this.clearExpiredCache();
   }
 
   private openDB(): Promise<IDBDatabase> {
@@ -59,6 +61,9 @@ export class OutfitPluginLoader {
 
     // Fetch from URL
     const response = await fetch(manifestUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load outfit manifest: ${response.status}`);
+    }
     const data: OutfitManifest = await response.json();
 
     // Save to cache
@@ -69,38 +74,32 @@ export class OutfitPluginLoader {
 
   async loadBaseManifest(manifestUrl: string): Promise<BaseManifest> {
     const response = await fetch(manifestUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load base manifest: ${response.status}`);
+    }
     return response.json();
   }
 
   async getAvailableOutfits(): Promise<OutfitManifest[]> {
     // In production, this would fetch from a server API
-    // For now, return the hard-coded list
-    return [
-      {
-        id: 'outfit-school',
-        name: 'School Uniform',
-        modelUrl: 'https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori/hiyori_pro_t10.model3.json',
-        type: 'outfit',
-        hide_parts: ['Body_Base'],
-        zIndex: 1,
-      },
-      {
-        id: 'outfit-casual',
-        name: 'Casual Wear',
-        modelUrl: 'https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori/hiyori_pro_t10.model3.json',
-        type: 'outfit',
-        hide_parts: ['Body_Base'],
-        zIndex: 1,
-      },
-      {
-        id: 'outfit-formal',
-        name: 'Formal Dress',
-        modelUrl: 'https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori/hiyori_pro_t10.model3.json',
-        type: 'outfit',
-        hide_parts: ['Body_Base', 'Arms_Base'],
-        zIndex: 1,
-      },
+    // For this demo, return the local manifests
+    const manifestUrls = [
+      '/live2d/models/outfits/outfit-school.json',
+      '/live2d/models/outfits/outfit-casual.json',
+      '/live2d/models/outfits/outfit-formal.json',
     ];
+
+    const outfits: OutfitManifest[] = [];
+    for (const url of manifestUrls) {
+      try {
+        const outfit = await this.loadOutfitManifest(url);
+        outfits.push(outfit);
+      } catch (e) {
+        console.warn(`Failed to load outfit manifest: ${url}`, e);
+      }
+    }
+
+    return outfits;
   }
 
   private async getFromCache(key: string): Promise<{ data: any; timestamp: number } | null> {

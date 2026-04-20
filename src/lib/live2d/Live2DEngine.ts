@@ -1,11 +1,26 @@
 'use client';
 
-import { Application, Container } from 'pixi.js';
-import { Live2DModel } from 'pixi-live2d-display';
+// Lazy imports to avoid SSR "window is not defined" errors
+// pixi.js and pixi-live2d-display require browser globals at module load time
+let PIXI: any = null;
+let Live2DModel: any = null;
 
-// Register PIXI globally for pixi-live2d-display
-if (typeof window !== 'undefined') {
-  (window as any).PIXI = { Application, Container };
+async function ensurePixiLoaded(): Promise<void> {
+  if (PIXI && Live2DModel) return;
+
+  const pixiModule = await import('pixi.js');
+  PIXI = pixiModule;
+
+  // Register PIXI globally BEFORE importing pixi-live2d-display
+  if (typeof window !== 'undefined') {
+    (window as any).PIXI = {
+      Application: pixiModule.Application,
+      Container: pixiModule.Container,
+    };
+  }
+
+  const live2dModule = await import('pixi-live2d-display');
+  Live2DModel = live2dModule.Live2DModel;
 }
 
 export interface Live2DEngineConfig {
@@ -16,14 +31,14 @@ export interface Live2DEngineConfig {
 }
 
 export class Live2DEngine {
-  private app: Application | null = null;
-  private baseModel: Live2DModel | null = null;
-  private outfitModels: Map<string, Live2DModel> = new Map();
-  private container: Container | null = null;
+  private app: any = null;
+  private baseModel: any = null;
+  private outfitModels: Map<string, any> = new Map();
+  private container: any = null;
   private _isInitialized = false;
 
   // Callbacks
-  public onModelLoaded?: (model: Live2DModel, type: 'base' | 'outfit') => void;
+  public onModelLoaded?: (model: any, type: 'base' | 'outfit') => void;
   public onError?: (error: Error) => void;
 
   get isInitialized() { return this._isInitialized; }
@@ -33,10 +48,13 @@ export class Live2DEngine {
 
   async initialize(config: Live2DEngineConfig): Promise<void> {
     try {
+      // Lazy-load pixi.js and pixi-live2d-display
+      await ensurePixiLoaded();
+
       // Load CubismCore if not already loaded
       await this.loadCubismCore();
 
-      this.app = new Application({
+      this.app = new PIXI.Application({
         view: config.canvas,
         width: config.width || 800,
         height: config.height || 800,
@@ -47,7 +65,7 @@ export class Live2DEngine {
         resolution: window.devicePixelRatio || 1,
       });
 
-      this.container = new Container();
+      this.container = new PIXI.Container();
       this.app.stage.addChild(this.container);
 
       this._isInitialized = true;
@@ -72,7 +90,7 @@ export class Live2DEngine {
         setTimeout(() => {
           clearInterval(checkInterval);
           reject(new Error('CubismCore load timeout'));
-        }, 10000);
+        }, 15000);
         return;
       }
 
@@ -88,19 +106,19 @@ export class Live2DEngine {
         setTimeout(() => {
           clearInterval(checkInterval);
           reject(new Error('CubismCore initialization timeout'));
-        }, 10000);
+        }, 15000);
       };
       script.onerror = () => reject(new Error('Failed to load CubismCore script'));
       document.head.appendChild(script);
     });
   }
 
-  async loadBaseModel(modelUrl: string): Promise<Live2DModel> {
+  async loadBaseModel(modelUrl: string): Promise<any> {
     if (!this.app || !this.container) throw new Error('Engine not initialized');
 
     // Remove existing base model
     if (this.baseModel) {
-      this.container.removeChild(this.baseModel as any);
+      this.container.removeChild(this.baseModel);
       this.baseModel.destroy();
     }
 
@@ -115,21 +133,21 @@ export class Live2DEngine {
     model.x = (this.app.screen.width - model.width) / 2;
     model.y = (this.app.screen.height - model.height) / 2;
 
-    this.container.addChildAt(model as any, 0);
+    this.container.addChildAt(model, 0);
     this.baseModel = model;
     this.onModelLoaded?.(model, 'base');
 
     return model;
   }
 
-  async loadOutfit(outfitId: string, modelUrl: string, zIndex: number = 1): Promise<Live2DModel> {
+  async loadOutfit(outfitId: string, modelUrl: string, zIndex: number = 1): Promise<any> {
     if (!this.app || !this.container) throw new Error('Engine not initialized');
     if (!this.baseModel) throw new Error('Base model must be loaded first');
 
     // Remove existing outfit with same ID
     if (this.outfitModels.has(outfitId)) {
       const existing = this.outfitModels.get(outfitId)!;
-      this.container.removeChild(existing as any);
+      this.container.removeChild(existing);
       existing.destroy();
       this.outfitModels.delete(outfitId);
     }
@@ -144,7 +162,7 @@ export class Live2DEngine {
 
     // Add at proper z-index (after base model)
     const insertIndex = Math.min(zIndex + 1, this.container.children.length);
-    this.container.addChildAt(model as any, insertIndex);
+    this.container.addChildAt(model, insertIndex);
     this.outfitModels.set(outfitId, model);
     this.onModelLoaded?.(model, 'outfit');
 
@@ -155,10 +173,37 @@ export class Live2DEngine {
     const model = this.outfitModels.get(outfitId);
     if (!model) return false;
 
-    this.container?.removeChild(model as any);
+    this.container?.removeChild(model);
     model.destroy();
     this.outfitModels.delete(outfitId);
     return true;
+  }
+
+  /**
+   * Resize the renderer to fit the container
+   */
+  resize(width: number, height: number): void {
+    if (!this.app) return;
+    this.app.renderer.resize(width, height);
+
+    // Re-center base model
+    if (this.baseModel) {
+      const scale = Math.min(
+        (width * 0.8) / this.baseModel.width * this.baseModel.scale.x,
+        (height * 0.9) / this.baseModel.height * this.baseModel.scale.y
+      );
+      // Don't rescale - just reposition
+      this.baseModel.x = (width - this.baseModel.width * this.baseModel.scale.x) / 2;
+      this.baseModel.y = (height - this.baseModel.height * this.baseModel.scale.y) / 2;
+    }
+
+    // Re-center outfit models
+    this.outfitModels.forEach((model) => {
+      if (this.baseModel) {
+        model.x = this.baseModel.x;
+        model.y = this.baseModel.y;
+      }
+    });
   }
 
   destroy(): void {

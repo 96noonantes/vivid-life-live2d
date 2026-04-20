@@ -1,20 +1,29 @@
 'use client';
 
-import type { Live2DModel } from 'pixi-live2d-display';
-
+/**
+ * 貫通防止 (Occlusion Logic)
+ * 
+ * When an outfit is applied, certain parts of the base body should be hidden
+ * to prevent the skin from "piercing through" the clothing during deep bends
+ * (e.g., elbows, knees). This is achieved by setting the opacity of specified
+ * parts to 0, eliminating the "CG feel" and enhancing the sense of reality.
+ */
 export class OcclusionManager {
   private hiddenParts: Map<string, Set<string>> = new Map(); // modelId -> Set of part IDs
 
-  applyOcclusion(model: Live2DModel, modelId: string, hideParts: string[]): void {
-    // Restore previously hidden parts
+  /**
+   * Apply occlusion to a model by hiding specified parts
+   */
+  applyOcclusion(model: any, modelId: string, hideParts: string[]): void {
+    // Restore previously hidden parts first
     this.restoreModel(model, modelId);
 
-    // Hide new parts
+    // Record and apply new hidden parts
     const hiddenSet = new Set(hideParts);
     this.hiddenParts.set(modelId, hiddenSet);
 
     try {
-      const internalModel = (model as any).internalModel;
+      const internalModel = model.internalModel;
       if (!internalModel) return;
 
       const coreModel = internalModel.coreModel;
@@ -34,9 +43,12 @@ export class OcclusionManager {
     }
   }
 
-  restoreModel(model: Live2DModel, modelId: string): void {
+  /**
+   * Restore all hidden parts on a model to full opacity
+   */
+  restoreModel(model: any, modelId: string): void {
     try {
-      const internalModel = (model as any).internalModel;
+      const internalModel = model.internalModel;
       if (!internalModel) return;
 
       const coreModel = internalModel.coreModel;
@@ -49,13 +61,23 @@ export class OcclusionManager {
       for (let i = 0; i < parts.count; i++) {
         parts.opacities[i] = 1;
       }
-    } catch {
+    } catch (e) {
       // Non-fatal
     }
 
     this.hiddenParts.delete(modelId);
   }
 
+  /**
+   * Get the set of currently hidden parts for a model
+   */
+  getHiddenParts(modelId: string): Set<string> | undefined {
+    return this.hiddenParts.get(modelId);
+  }
+
+  /**
+   * Clear all occlusion records
+   */
   clearAll(): void {
     this.hiddenParts.clear();
   }
