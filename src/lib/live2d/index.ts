@@ -6,3 +6,5 @@ export { OutfitPluginLoader } from './OutfitPluginLoader';
 export type { OutfitManifest, BaseManifest } from './OutfitPluginLoader';
 export { OcclusionManager } from './OcclusionManager';
 export { OutfitTransitionEffect } from './OutfitTransitionEffect';
+export { ModelLibrary, MODEL_PRESETS, PORTRAIT_PROMPTS, STYLE_OPTIONS } from './ModelLibrary';
+export type { ModelPreset } from './ModelLibrary';

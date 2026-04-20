@@ -1,7 +1,6 @@
 'use client';
 
 // Lazy imports to avoid SSR "window is not defined" errors
-// pixi.js and pixi-live2d-display require browser globals at module load time
 let PIXI: any = null;
 let Live2DModel: any = null;
 
@@ -36,22 +35,22 @@ export class Live2DEngine {
   private outfitModels: Map<string, any> = new Map();
   private container: any = null;
   private _isInitialized = false;
+  private _currentModelUrl: string | null = null;
 
   // Callbacks
   public onModelLoaded?: (model: any, type: 'base' | 'outfit') => void;
+  public onModelSwitched?: (modelUrl: string) => void;
   public onError?: (error: Error) => void;
 
   get isInitialized() { return this._isInitialized; }
   get currentBaseModel() { return this.baseModel; }
   get currentOutfits() { return this.outfitModels; }
   get pixiApp() { return this.app; }
+  get currentModelUrl() { return this._currentModelUrl; }
 
   async initialize(config: Live2DEngineConfig): Promise<void> {
     try {
-      // Lazy-load pixi.js and pixi-live2d-display
       await ensurePixiLoaded();
-
-      // Load CubismCore if not already loaded
       await this.loadCubismCore();
 
       this.app = new PIXI.Application({
@@ -120,7 +119,15 @@ export class Live2DEngine {
     if (this.baseModel) {
       this.container.removeChild(this.baseModel);
       this.baseModel.destroy();
+      this.baseModel = null;
     }
+
+    // Remove all outfit models when switching base
+    this.outfitModels.forEach((model) => {
+      this.container.removeChild(model);
+      model.destroy();
+    });
+    this.outfitModels.clear();
 
     const model = await Live2DModel.from(modelUrl, { autoInteract: false });
 
@@ -135,6 +142,49 @@ export class Live2DEngine {
 
     this.container.addChildAt(model, 0);
     this.baseModel = model;
+    this._currentModelUrl = modelUrl;
+    this.onModelLoaded?.(model, 'base');
+
+    return model;
+  }
+
+  /**
+   * Switch the base character model with transition support.
+   * Removes all outfits and loads a new base model.
+   */
+  async switchCharacter(modelUrl: string): Promise<any> {
+    if (!this.app || !this.container) throw new Error('Engine not initialized');
+
+    // Clear all outfits first
+    this.outfitModels.forEach((model) => {
+      this.container.removeChild(model);
+      model.destroy();
+    });
+    this.outfitModels.clear();
+
+    // Remove existing base model
+    if (this.baseModel) {
+      this.container.removeChild(this.baseModel);
+      this.baseModel.destroy();
+      this.baseModel = null;
+    }
+
+    // Load new model
+    const model = await Live2DModel.from(modelUrl, { autoInteract: false });
+
+    // Scale and position model at center
+    const scale = Math.min(
+      (this.app.screen.width * 0.8) / model.width,
+      (this.app.screen.height * 0.9) / model.height
+    );
+    model.scale.set(scale);
+    model.x = (this.app.screen.width - model.width) / 2;
+    model.y = (this.app.screen.height - model.height) / 2;
+
+    this.container.addChildAt(model, 0);
+    this.baseModel = model;
+    this._currentModelUrl = modelUrl;
+    this.onModelSwitched?.(modelUrl);
     this.onModelLoaded?.(model, 'base');
 
     return model;
@@ -180,24 +230,25 @@ export class Live2DEngine {
   }
 
   /**
-   * Resize the renderer to fit the container
+   * Remove all outfits
    */
+  removeAllOutfits(): void {
+    this.outfitModels.forEach((model) => {
+      this.container?.removeChild(model);
+      model.destroy();
+    });
+    this.outfitModels.clear();
+  }
+
   resize(width: number, height: number): void {
     if (!this.app) return;
     this.app.renderer.resize(width, height);
 
-    // Re-center base model
     if (this.baseModel) {
-      const scale = Math.min(
-        (width * 0.8) / this.baseModel.width * this.baseModel.scale.x,
-        (height * 0.9) / this.baseModel.height * this.baseModel.scale.y
-      );
-      // Don't rescale - just reposition
       this.baseModel.x = (width - this.baseModel.width * this.baseModel.scale.x) / 2;
       this.baseModel.y = (height - this.baseModel.height * this.baseModel.scale.y) / 2;
     }
 
-    // Re-center outfit models
     this.outfitModels.forEach((model) => {
       if (this.baseModel) {
         model.x = this.baseModel.x;
@@ -216,5 +267,6 @@ export class Live2DEngine {
     this.app?.destroy(true);
     this.app = null;
     this._isInitialized = false;
+    this._currentModelUrl = null;
   }
 }
