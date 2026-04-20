@@ -29,6 +29,8 @@ export interface Live2DEngineConfig {
   backgroundColor?: number;
 }
 
+export type CharacterMode = 'live2d' | 'sprite';
+
 export class Live2DEngine {
   private app: any = null;
   private baseModel: any = null;
@@ -36,6 +38,8 @@ export class Live2DEngine {
   private container: any = null;
   private _isInitialized = false;
   private _currentModelUrl: string | null = null;
+  private _characterMode: CharacterMode = 'live2d';
+  private _spriteCharacter: any = null; // SpriteCharacterRenderer instance
 
   // Callbacks
   public onModelLoaded?: (model: any, type: 'base' | 'outfit') => void;
@@ -47,6 +51,8 @@ export class Live2DEngine {
   get currentOutfits() { return this.outfitModels; }
   get pixiApp() { return this.app; }
   get currentModelUrl() { return this._currentModelUrl; }
+  get characterMode() { return this._characterMode; }
+  get spriteCharacter() { return this._spriteCharacter; }
 
   async initialize(config: Live2DEngineConfig): Promise<void> {
     try {
@@ -115,6 +121,9 @@ export class Live2DEngine {
   async loadBaseModel(modelUrl: string): Promise<any> {
     if (!this.app || !this.container) throw new Error('Engine not initialized');
 
+    // Remove any sprite character first
+    this.removeSpriteCharacter();
+
     // Remove existing base model
     if (this.baseModel) {
       this.container.removeChild(this.baseModel);
@@ -143,6 +152,7 @@ export class Live2DEngine {
     this.container.addChildAt(model, 0);
     this.baseModel = model;
     this._currentModelUrl = modelUrl;
+    this._characterMode = 'live2d';
     this.onModelLoaded?.(model, 'base');
 
     return model;
@@ -154,6 +164,9 @@ export class Live2DEngine {
    */
   async switchCharacter(modelUrl: string): Promise<any> {
     if (!this.app || !this.container) throw new Error('Engine not initialized');
+
+    // Remove sprite character if present
+    this.removeSpriteCharacter();
 
     // Clear all outfits first
     this.outfitModels.forEach((model) => {
@@ -184,10 +197,50 @@ export class Live2DEngine {
     this.container.addChildAt(model, 0);
     this.baseModel = model;
     this._currentModelUrl = modelUrl;
+    this._characterMode = 'live2d';
     this.onModelSwitched?.(modelUrl);
     this.onModelLoaded?.(model, 'base');
 
     return model;
+  }
+
+  /**
+   * SpriteCharacterRendererインスタンスを設定
+   * AI生成キャラクター表示モード
+   */
+  setSpriteCharacter(spriteRenderer: any): void {
+    if (!this.app || !this.container) return;
+
+    // Remove existing Live2D model
+    if (this.baseModel) {
+      this.container.removeChild(this.baseModel);
+      this.baseModel.destroy();
+      this.baseModel = null;
+    }
+
+    // Remove existing outfits
+    this.outfitModels.forEach((model) => {
+      this.container.removeChild(model);
+      model.destroy();
+    });
+    this.outfitModels.clear();
+
+    // Remove previous sprite character
+    this.removeSpriteCharacter();
+
+    this._spriteCharacter = spriteRenderer;
+    this._characterMode = 'sprite';
+    this._currentModelUrl = null;
+  }
+
+  /**
+   * スプライトキャラクターを削除
+   */
+  removeSpriteCharacter(): void {
+    if (this._spriteCharacter) {
+      this._spriteCharacter.destroy();
+      this._spriteCharacter = null;
+    }
   }
 
   async loadOutfit(outfitId: string, modelUrl: string, zIndex: number = 1): Promise<any> {
@@ -244,6 +297,11 @@ export class Live2DEngine {
     if (!this.app) return;
     this.app.renderer.resize(width, height);
 
+    if (this._characterMode === 'sprite' && this._spriteCharacter) {
+      this._spriteCharacter.resize(width, height);
+      return;
+    }
+
     if (this.baseModel) {
       this.baseModel.x = (width - this.baseModel.width * this.baseModel.scale.x) / 2;
       this.baseModel.y = (height - this.baseModel.height * this.baseModel.scale.y) / 2;
@@ -258,6 +316,7 @@ export class Live2DEngine {
   }
 
   destroy(): void {
+    this.removeSpriteCharacter();
     this.outfitModels.forEach(model => model.destroy());
     this.outfitModels.clear();
     if (this.baseModel) {
@@ -268,5 +327,6 @@ export class Live2DEngine {
     this.app = null;
     this._isInitialized = false;
     this._currentModelUrl = null;
+    this._characterMode = 'live2d';
   }
 }

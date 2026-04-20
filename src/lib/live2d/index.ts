@@ -1,5 +1,5 @@
 export { Live2DEngine } from './Live2DEngine';
-export type { Live2DEngineConfig } from './Live2DEngine';
+export type { Live2DEngineConfig, CharacterMode } from './Live2DEngine';
 export { VividnessSyncManager } from './VividnessSyncManager';
 export type { VividnessState } from './VividnessSyncManager';
 export { OutfitPluginLoader } from './OutfitPluginLoader';
@@ -8,3 +8,7 @@ export { OcclusionManager } from './OcclusionManager';
 export { OutfitTransitionEffect } from './OutfitTransitionEffect';
 export { ModelLibrary, MODEL_PRESETS, PORTRAIT_PROMPTS, STYLE_OPTIONS } from './ModelLibrary';
 export type { ModelPreset } from './ModelLibrary';
+export { CharacterGenerator } from './CharacterGenerator';
+export type { CharacterPartImages, GeneratedCharacterData, GenerationProgress, ProgressCallback } from './CharacterGenerator';
+export { SpriteCharacterRenderer } from './SpriteCharacterRenderer';
+export type { SpriteEmotion, SpriteAnimationState } from './SpriteCharacterRenderer';
