@@ -1,0 +1,10 @@
+{
+  "id": "outfit-school",
+  "name": "School Uniform",
+  "modelUrl": "https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display/test/assets/hiyori/hiyori_pro_t10.model3.json",
+  "thumbnailUrl": "",
+  "type": "outfit",
+  "hide_parts": ["Body_Base", "Arms_Base"],
+  "physicsUrl": "",
+  "zIndex": 1
+}
