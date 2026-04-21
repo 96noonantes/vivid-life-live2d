@@ -28,10 +28,10 @@ export async function POST(request: NextRequest) {
     const result = await generateImage(fullPrompt);
 
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Portrait generation error:', error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Failed to generate portrait' },
       { status: 500 }
     );
   }

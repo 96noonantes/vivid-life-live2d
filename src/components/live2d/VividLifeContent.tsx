@@ -144,14 +144,23 @@ export default function VividLifeContent() {
     const handleOrientation = (e: DeviceOrientationEvent) => {
       if (e.beta !== null && e.gamma !== null) handleGyroscope(e.beta, e.gamma);
     };
+    // permission解決中にクリーンアップされた場合、late-resolveでリスナー追加されないようガード
+    let cancelled = false;
     if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
       (DeviceOrientationEvent as any).requestPermission()
-        .then((r: string) => { if (r === 'granted') window.addEventListener('deviceorientation', handleOrientation); })
+        .then((r: string) => {
+          if (!cancelled && r === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation);
+          }
+        })
         .catch(console.error);
     } else {
       window.addEventListener('deviceorientation', handleOrientation);
     }
-    return () => window.removeEventListener('deviceorientation', handleOrientation);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('deviceorientation', handleOrientation);
+    };
   }, [gyroEnabled, isInitialized, handleGyroscope]);
 
   // Determine breath value based on mode

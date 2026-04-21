@@ -280,11 +280,12 @@ export function useLive2D() {
         setGenerationProgress(progress);
       });
 
+      // 生成成功時点でギャラリーに保存（表示失敗時もデータは保持）
+      setGeneratedCharacters(prev => [characterData, ...prev].slice(0, 10));
+
       // 生成完了 → SpriteCharacterRendererで表示
       await displaySpriteCharacter(characterData);
 
-      // 保存
-      setGeneratedCharacters(prev => [characterData, ...prev].slice(0, 10));
       setGenerationProgress(null);
 
       return characterData;

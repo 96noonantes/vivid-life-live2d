@@ -285,8 +285,9 @@ export class Live2DEngine {
     }
 
     if (this.baseModel) {
-      this.baseModel.x = (width - this.baseModel.width * this.baseModel.scale.x) / 2;
-      this.baseModel.y = (height - this.baseModel.height * this.baseModel.scale.y) / 2;
+      // PIXI Container.width getter はスケール適用後の値を返すため、scale.x を再度掛けない
+      this.baseModel.x = (width - this.baseModel.width) / 2;
+      this.baseModel.y = (height - this.baseModel.height) / 2;
     }
 
     this.outfitModels.forEach((model) => {
