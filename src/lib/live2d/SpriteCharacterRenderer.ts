@@ -113,27 +113,40 @@ export class SpriteCharacterRenderer {
       relax: parts.relax,
     };
 
-    for (const [key, dataUrl] of Object.entries(partMap)) {
-      if (!dataUrl) continue;
-      try {
-        const texture = await PIXI.Texture.fromURL(dataUrl);
-        const sprite = new PIXI.Sprite(texture);
-        sprite.anchor.set(0.5, 0.5);
-        sprite.alpha = 0;
-        sprite.zIndex = key === 'base' ? 0 : 1;
-        renderer.container.addChild(sprite);
-        renderer.sprites.set(key, sprite);
-      } catch (e) {
-        console.error(`Failed to load sprite for part "${key}":`, e);
-      }
+    // 並列でテクスチャをロード。1つ失敗しても他は継続（全7枚の順次awaitを回避）
+    const entries = Object.entries(partMap).filter(([, url]) => !!url);
+    const loaded = await Promise.all(
+      entries.map(async ([key, dataUrl]) => {
+        try {
+          const texture = await PIXI.Texture.fromURL(dataUrl);
+          return { key, texture };
+        } catch (e) {
+          console.error(`Failed to load sprite for part "${key}":`, e);
+          return { key, texture: null as any };
+        }
+      })
+    );
+
+    // 解決順ではなく定義順にスプライトを作成・追加（zIndex衝突防止）
+    for (const { key, texture } of loaded) {
+      if (!texture) continue;
+      const sprite = new PIXI.Sprite(texture);
+      sprite.anchor.set(0.5, 0.5);
+      sprite.alpha = 0;
+      sprite.zIndex = key === 'base' ? 0 : 1;
+      renderer.container.addChild(sprite);
+      renderer.sprites.set(key, sprite);
     }
 
     // ベーススプライトを表示
     const baseSprite = renderer.sprites.get('base');
-    if (baseSprite) {
-      baseSprite.alpha = 1;
-      baseSprite.zIndex = 0;
+    if (!baseSprite) {
+      // ベース画像が無い場合は描画不可能。呼び出し側にエラーを通知してフォールバック表示させる
+      renderer.container.destroy({ children: true });
+      throw new Error('ベース画像のテクスチャロードに失敗しました');
     }
+    baseSprite.alpha = 1;
+    baseSprite.zIndex = 0;
 
     // 閉眼スプライト（瞬き用）はベースの直上
     const eyesClosed = renderer.sprites.get('eyesClosed');
@@ -158,13 +171,11 @@ export class SpriteCharacterRenderer {
     renderer.container.y = renderer.baseY;
 
     // ベーススプライトのサイズに基づいてスケール調整
-    if (baseSprite) {
-      const scaleX = (screen.width * 0.6) / baseSprite.texture.width;
-      const scaleY = (screen.height * 0.85) / baseSprite.texture.height;
-      const scale = Math.min(scaleX, scaleY, 1.0);
-      renderer.container.scale.set(scale);
-      renderer.baseScale = scale;
-    }
+    const scaleX = (screen.width * 0.6) / baseSprite.texture.width;
+    const scaleY = (screen.height * 0.85) / baseSprite.texture.height;
+    const scale = Math.min(scaleX, scaleY, 1.0);
+    renderer.container.scale.set(scale);
+    renderer.baseScale = scale;
 
     pixiApp.stage.addChild(renderer.container);
 

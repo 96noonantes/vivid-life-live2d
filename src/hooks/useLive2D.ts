@@ -27,6 +27,8 @@ export function useLive2D() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const spriteRendererRef = useRef<SpriteCharacterRenderer | null>(null);
   const spriteAnimFrameRef = useRef<number | null>(null);
+  // 多重生成・unmount時のstale結果を破棄するためのジェネレーションID
+  const activeGenerationIdRef = useRef(0);
 
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -265,6 +267,10 @@ export function useLive2D() {
       return null;
     }
 
+    // 多重クリック・unmountで発生するstaleな結果を破棄するためID取得
+    const myGen = ++activeGenerationIdRef.current;
+    const isStale = () => myGen !== activeGenerationIdRef.current;
+
     try {
       setIsGenerating(true);
       setError(null);
@@ -277,32 +283,48 @@ export function useLive2D() {
 
       // CharacterGeneratorで全パーツを生成
       const characterData = await CharacterGenerator.generateAllParts(prompt, style, (progress) => {
+        if (isStale()) return;
         setGenerationProgress(progress);
       });
 
-      // 生成完了 → SpriteCharacterRendererで表示
-      await displaySpriteCharacter(characterData);
+      if (isStale()) return null;
 
-      // 保存
+      // 生成成功時点でギャラリーに保存（表示失敗時もデータは保持）
       setGeneratedCharacters(prev => [characterData, ...prev].slice(0, 10));
+
+      // 生成完了 → SpriteCharacterRendererで表示（ID継承で内部で再bumpしない）
+      await displaySpriteCharacter(characterData, { inheritId: true });
+
+      if (isStale()) return null;
+
       setGenerationProgress(null);
 
       return characterData;
     } catch (e) {
+      if (isStale()) return null;
       setError(e instanceof Error ? e.message : 'キャラクター生成に失敗しました');
       console.error('Character generation error:', e);
       setGenerationProgress(null);
       return null;
     } finally {
-      setIsGenerating(false);
+      if (!isStale()) setIsGenerating(false);
     }
   }, []);
 
   /**
    * 生成済みキャラクターデータからスプライトキャラクターを表示
+   * inheritId: generateLive2DCharacter からの呼び出しでジェネレーションIDを継承する
    */
-  const displaySpriteCharacter = useCallback(async (characterData: GeneratedCharacterData) => {
+  const displaySpriteCharacter = useCallback(async (
+    characterData: GeneratedCharacterData,
+    opts?: { inheritId?: boolean }
+  ) => {
     if (!engineRef.current || !engineRef.current.pixiApp) return;
+
+    const myGen = opts?.inheritId
+      ? activeGenerationIdRef.current
+      : ++activeGenerationIdRef.current;
+    const isStale = () => myGen !== activeGenerationIdRef.current;
 
     try {
       setIsLoading(true);
@@ -321,6 +343,12 @@ export function useLive2D() {
             characterData.id
           );
 
+          // 生成中に新しい表示要求が入った場合、作成したrendererを破棄して離脱
+          if (isStale()) {
+            renderer.destroy();
+            return;
+          }
+
           // エンジンにスプライトキャラクターを設定
           engineRef.current!.setSpriteCharacter(renderer);
           spriteRendererRef.current = renderer;
@@ -331,9 +359,15 @@ export function useLive2D() {
           engineRef.current.pixiApp,
           characterData.id
         );
+        if (isStale()) {
+          renderer.destroy();
+          return;
+        }
         engineRef.current.setSpriteCharacter(renderer);
         spriteRendererRef.current = renderer;
       }
+
+      if (isStale()) return;
 
       // スプライトアニメーションループを開始
       startSpriteAnimation();
@@ -359,10 +393,11 @@ export function useLive2D() {
       setCurrentOutfit(null);
 
     } catch (e) {
+      if (isStale()) return;
       setError(e instanceof Error ? e.message : 'スプライトキャラクターの表示に失敗しました');
       console.error('Sprite character display error:', e);
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   }, []);
 
@@ -376,7 +411,8 @@ export function useLive2D() {
     let lastTime = performance.now();
 
     const animate = (time: number) => {
-      const dt = time - lastTime;
+      // タブ非アクティブから戻った際の巨大なdtでアニメが飛ぶのを防止（VividnessSyncManagerと同じ100ms cap）
+      const dt = Math.min(time - lastTime, 100);
       lastTime = time;
 
       const renderer = spriteRendererRef.current;
@@ -516,6 +552,9 @@ export function useLive2D() {
   // Cleanup
   useEffect(() => {
     return () => {
+      // unmount時、in-flightな生成／表示処理のsetStateを無効化（refへの書き込みは意図的に現在値＋1）
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      activeGenerationIdRef.current++;
       stopSpriteAnimation();
       syncManagerRef.current?.stop();
       engineRef.current?.destroy();

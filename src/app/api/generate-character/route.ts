@@ -28,10 +28,10 @@ export async function POST(request: NextRequest) {
       ...result,
       partType: partType || 'unknown',
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Character part generation error:', error);
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: 'Failed to generate character part' },
       { status: 500 }
     );
   }

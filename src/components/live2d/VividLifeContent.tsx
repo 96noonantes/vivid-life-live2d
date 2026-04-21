@@ -12,6 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { MODEL_PRESETS, STYLE_OPTIONS, PORTRAIT_PROMPTS } from '@/lib/live2d/ModelLibrary';
 import type { ModelPreset } from '@/lib/live2d/ModelLibrary';
+import { toast } from '@/hooks/use-toast';
 
 // Emotion definitions
 const EMOTIONS = [
@@ -93,8 +94,8 @@ export default function VividLifeContent() {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (canvas && container) {
-      canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
-      canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+      // PIXI.Application側のautoDensity + resolutionがcanvas.width/heightを適切に設定するため、
+      // ここでの手動設定は不要（設定すると直後にPIXIに上書きされ一瞬ミスマッチが生じる可能性あり）
       initialize(canvas, container);
     }
   }, [initialize, canvasRef]);
@@ -144,14 +145,23 @@ export default function VividLifeContent() {
     const handleOrientation = (e: DeviceOrientationEvent) => {
       if (e.beta !== null && e.gamma !== null) handleGyroscope(e.beta, e.gamma);
     };
+    // permission解決中にクリーンアップされた場合、late-resolveでリスナー追加されないようガード
+    let cancelled = false;
     if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
       (DeviceOrientationEvent as any).requestPermission()
-        .then((r: string) => { if (r === 'granted') window.addEventListener('deviceorientation', handleOrientation); })
+        .then((r: string) => {
+          if (!cancelled && r === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation);
+          }
+        })
         .catch(console.error);
     } else {
       window.addEventListener('deviceorientation', handleOrientation);
     }
-    return () => window.removeEventListener('deviceorientation', handleOrientation);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('deviceorientation', handleOrientation);
+    };
   }, [gyroEnabled, isInitialized, handleGyroscope]);
 
   // Determine breath value based on mode
@@ -174,17 +184,18 @@ export default function VividLifeContent() {
     const result = await generateLive2DCharacter(charPrompt, charStyle);
     if (result) {
       setCharPreview(result.parts.base);
-      // [修正 #5] フォールバック通知
+      // フォールバック通知はshadcnトーストで非ブロッキング表示
       if (result.fallbackParts.length > 0) {
         const partLabels: Record<string, string> = {
           eyesClosed: '閉眼', joy: '喜び', sorrow: '悲しみ',
           anger: '怒り', surprise: '驚き', relax: 'リラックス',
         };
         const labels = result.fallbackParts.map(k => partLabels[k] || k).join('、');
-        // 少し遅延させてトースト表示（生成完了オーバーレイが消えた後）
-        setTimeout(() => {
-          alert(`一部の表情パーツ（${labels}）の生成に失敗しました。ニュートラル表情で代用しています。`);
-        }, 1500);
+        toast({
+          title: '一部パーツの生成に失敗',
+          description: `${labels} の生成に失敗しました。ニュートラル表情で代用しています。`,
+          variant: 'destructive',
+        });
       }
     }
   };
